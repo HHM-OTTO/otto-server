@@ -11,6 +11,11 @@ import { checkExistingNumber, searchAvailableNumbers, purchasePhoneNumber, updat
 import { insertUserSchema, updateUserSchema, insertRestaurantSchema, updateRestaurantSchema, insertAgentConfigurationSchema, updateAgentConfigSchema, insertCallLogSchema, insertUserAgentAccessSchema, type AgentConfiguration, insertSkillSchema, updateSkillSchema, insertMethodSchema, updateMethodSchema, insertAgentSkillSchema, updateAgentSkillSchema, insertPrinterSchema, updatePrinterSchema, insertPhoneNumberSchema, updatePhoneNumberSchema, insertPlatformSettingsSchema, updatePlatformSettingsSchema, insertMenuOverrideSchema, users, subscriptionPrices } from "@shared/schema";
 import { stripeService } from "./stripe-service";
 import Stripe from "stripe";
+
+// Initialize Stripe instance
+const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
+  apiVersion: "2025-09-30.clover",
+});
 import { z } from "zod";
 // @ts-ignore - Twilio types have export issues
 import twilio from "twilio";
@@ -488,9 +493,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (resetDate <= new Date()) {
             return res.status(400).json({ error: "resetWaitTimeAt must be a future time" });
           }
-          configData.resetWaitTimeAt = resetDate as any;
+          configData.resetWaitTimeAt = resetDate;
         } else {
-          configData.resetWaitTimeAt = null as any;
+          configData.resetWaitTimeAt = null;
         }
       }
       
@@ -508,6 +513,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           restaurantId: id,
           billingUserId: user.id,
           ...configData,
+          resetWaitTimeAt: configData.resetWaitTimeAt instanceof Date ? configData.resetWaitTimeAt : 
+                          typeof configData.resetWaitTimeAt === 'string' ? new Date(configData.resetWaitTimeAt) : 
+                          configData.resetWaitTimeAt,
         };
         config = await storage.createAgentConfiguration(newConfigData);
         if (!config) {
@@ -3720,8 +3728,8 @@ Venue Data: ${JSON.stringify(serpData)}`;
         const meters = await stripe.billing.meters.list({ limit: 100 });
         diagnostics.meters = {
           count: meters.data.length,
-          names: meters.data.map(m => m.event_name),
-          details: meters.data.map(m => ({
+          names: meters.data.map((m: any) => m.event_name),
+          details: meters.data.map((m: any) => ({
             event_name: m.event_name,
             display_name: m.display_name,
             status: m.status,
