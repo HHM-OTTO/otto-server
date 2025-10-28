@@ -487,9 +487,24 @@ export class DatabaseStorage implements IStorage {
   }
 
   async updateAgentConfiguration(restaurantId: string, config: UpdateAgentConfig): Promise<AgentConfiguration | undefined> {
+    // Convert resetWaitTimeAt from string to Date if needed
+    const processedConfig: any = {
+      ...config,
+      updatedAt: new Date()
+    };
+    
+    // Handle resetWaitTimeAt conversion
+    if (config.resetWaitTimeAt !== undefined) {
+      if (typeof config.resetWaitTimeAt === 'string') {
+        processedConfig.resetWaitTimeAt = new Date(config.resetWaitTimeAt);
+      } else {
+        processedConfig.resetWaitTimeAt = config.resetWaitTimeAt;
+      }
+    }
+    
     const [updated] = await db
       .update(agentConfigurations)
-      .set({ ...config, updatedAt: new Date() })
+      .set(processedConfig)
       .where(eq(agentConfigurations.restaurantId, restaurantId))
       .returning();
     return updated || undefined;
@@ -863,12 +878,16 @@ export class DatabaseStorage implements IStorage {
     }
 
     // Get total count
-    let countQuery = db.select({ count: sql`COUNT(*)` }).from(callLogs);
+    let countQuery;
     if (userRole === 'super_user') {
-      countQuery = countQuery
+      countQuery = db.select({ count: sql`COUNT(*)` })
+        .from(callLogs)
         .innerJoin(agentConfigurations, eq(callLogs.restaurantId, agentConfigurations.restaurantId))
         .innerJoin(userAgentAccess, eq(agentConfigurations.id, userAgentAccess.agentConfigurationId));
+    } else {
+      countQuery = db.select({ count: sql`COUNT(*)` }).from(callLogs);
     }
+    
     if (conditions.length > 0) {
       countQuery = countQuery.where(and(...conditions));
     }

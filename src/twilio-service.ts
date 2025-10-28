@@ -239,9 +239,9 @@ export async function getPhoneNumberDetails(twilioSid: string): Promise<TwilioPh
         mms: number.capabilities?.mms || false,
       },
       sid: number.sid,
-      locality: number.locality || undefined,
-      region: number.region || undefined,
-      isoCountry: number.isoCountry || undefined,
+      locality: (number as any).locality || undefined,
+      region: (number as any).region || undefined,
+      isoCountry: (number as any).isoCountry || undefined,
     };
   } catch (error) {
     console.error('Error fetching Twilio number details:', error);

@@ -183,7 +183,7 @@ export class StripeService {
 
     const customer = await stripe.customers.create({
       email: user.email,
-      name: user.name,
+      name: `${user.firstName} ${user.lastName}`,
       metadata: {
         userId: user.id,
         firebaseUid: user.firebaseUid,
@@ -428,7 +428,7 @@ export class StripeService {
     // Send webhook notification for new user subscription (non-blocking)
     if (isNewSignup) {
       sendNewUserWebhook(
-        { name: user.name, email: user.email },
+        { name: `${user.firstName} ${user.lastName}`, email: user.email },
         plan
       ).catch(error => {
         console.error('Failed to send new user webhook (non-blocking)', error);
