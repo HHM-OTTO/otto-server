@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.env
+.env.*
+*.log
+.DS_Store
+
+# Local database artifacts
+*.db
+*.sqlite
+
+# Builds
+coverage/
+tmp/

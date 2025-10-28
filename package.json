@@ -1,0 +1,38 @@
+{
+  "name": "otto-admin-backend",
+  "version": "1.0.0",
+  "type": "module",
+  "license": "MIT",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx src/index.ts",
+    "build": "esbuild src/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
+    "start": "NODE_ENV=production node dist/index.js",
+    "typecheck": "tsc --noEmit",
+    "db:push": "drizzle-kit push"
+  },
+  "dependencies": {
+    "@google-cloud/storage": "^7.17.1",
+    "@neondatabase/serverless": "^0.10.4",
+    "archiver": "^7.0.1",
+    "dotenv": "^17.2.3",
+    "drizzle-orm": "^0.39.1",
+    "drizzle-zod": "^0.7.0",
+    "express": "^4.21.2",
+    "firebase-admin": "^13.5.0",
+    "nanoid": "^5.1.5",
+    "node-cron": "^4.2.1",
+    "stripe": "^19.0.0",
+    "twilio": "^5.10.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/archiver": "^6.0.3",
+    "@types/express": "4.17.21",
+    "@types/node": "20.16.11",
+    "@types/node-cron": "^3.0.11",
+    "drizzle-kit": "^0.31.4",
+    "esbuild": "^0.25.0",
+    "tsx": "^4.20.5",
+    "typescript": "5.6.3"
+  }
+}
