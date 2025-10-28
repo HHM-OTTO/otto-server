@@ -4,11 +4,11 @@
   "type": "module",
   "license": "MIT",
   "scripts": {
-    "dev": "NODE_ENV=development tsx src/index.ts",
-    "build": "esbuild src/index.ts --platform=node --packages=external --bundle --format=esm --outdir=dist",
-    "start": "NODE_ENV=production node dist/index.js",
-    "typecheck": "tsc --noEmit",
-    "db:push": "drizzle-kit push"
+    "dev": "NODE_ENV=development bun run src/index.ts",
+    "build": "bun build src/index.ts --outdir=dist --target=node",
+    "start": "NODE_ENV=production bun run dist/index.js",
+    "typecheck": "bun run tsc --noEmit",
+    "db:push": "bun run drizzle-kit push"
   },
   "dependencies": {
     "@google-cloud/storage": "^7.17.1",
@@ -31,8 +31,6 @@
     "@types/node": "20.16.11",
     "@types/node-cron": "^3.0.11",
     "drizzle-kit": "^0.31.4",
-    "esbuild": "^0.25.0",
-    "tsx": "^4.20.5",
     "typescript": "5.6.3"
   }
 }
