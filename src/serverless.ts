@@ -21,8 +21,19 @@ app.use((req, res, next) => {
 app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 
-// Register routes
-await registerRoutes(app);
+// Register routes (async initialization)
+let isInitialized = false;
+const initPromise = registerRoutes(app).then(() => {
+  isInitialized = true;
+});
+
+// Middleware to ensure routes are initialized
+app.use(async (req, res, next) => {
+  if (!isInitialized) {
+    await initPromise;
+  }
+  next();
+});
 
 // Export for Vercel serverless
 export default app;
