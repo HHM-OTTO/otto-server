@@ -64,31 +64,40 @@ app.use((req, res, next) => {
   next();
 });
 
-(async () => {
-  const server = await registerRoutes(app);
+// Initialize routes
+const initPromise = registerRoutes(app);
 
-  app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
-    const status = err.status || err.statusCode || 500;
-    const message = err.message || "Internal Server Error";
+app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
+  const status = err.status || err.statusCode || 500;
+  const message = err.message || "Internal Server Error";
 
-    res.status(status).json({ message });
-    throw err;
-  });
+  res.status(status).json({ message });
+  throw err;
+});
 
-  const port = parseInt(process.env.PORT || "5001", 10);
-  server.listen(
-    {
-      port,
-      host: "0.0.0.0",
-    },
-    () => {
-      log(`API server running on port ${port}`);
+// Only start server if not in Vercel serverless environment
+if (process.env.VERCEL !== '1') {
+  (async () => {
+    const server = await initPromise;
 
-      // Start wait time reset scheduler
-      WaitTimeResetScheduler.start();
+    const port = parseInt(process.env.PORT || "5001", 10);
+    server.listen(
+      {
+        port,
+        host: "0.0.0.0",
+      },
+      () => {
+        log(`API server running on port ${port}`);
 
-      // Start menu override reset scheduler
-      MenuOverrideResetScheduler.start();
-    },
-  );
-})();
+        // Start wait time reset scheduler
+        WaitTimeResetScheduler.start();
+
+        // Start menu override reset scheduler
+        MenuOverrideResetScheduler.start();
+      },
+    );
+  })();
+}
+
+// Export for Vercel serverless
+export default app;
