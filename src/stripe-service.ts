@@ -19,12 +19,12 @@ const STRIPE_KEY = isProduction
   : (process.env.TESTING_STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY);
 
 if (!STRIPE_KEY) {
-  throw new Error("Missing required Stripe secret key");
+  console.warn("Stripe credentials not configured - billing endpoints disabled");
 }
 
-const stripe = new Stripe(STRIPE_KEY, {
-  apiVersion: "2025-09-30.clover",
-});
+const stripe: Stripe = STRIPE_KEY
+  ? new Stripe(STRIPE_KEY, { apiVersion: "2025-09-30.clover" })
+  : (null as unknown as Stripe);
 
 // Helper function to get the correct base URL for redirects
 function getBaseUrl(): string {

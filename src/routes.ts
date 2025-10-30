@@ -11,11 +11,6 @@ import { checkExistingNumber, searchAvailableNumbers, purchasePhoneNumber, updat
 import { insertUserSchema, updateUserSchema, insertRestaurantSchema, updateRestaurantSchema, insertAgentConfigurationSchema, updateAgentConfigSchema, insertCallLogSchema, insertUserAgentAccessSchema, type AgentConfiguration, insertSkillSchema, updateSkillSchema, insertMethodSchema, updateMethodSchema, insertAgentSkillSchema, updateAgentSkillSchema, insertPrinterSchema, updatePrinterSchema, insertPhoneNumberSchema, updatePhoneNumberSchema, insertPlatformSettingsSchema, updatePlatformSettingsSchema, insertMenuOverrideSchema, users, subscriptionPrices } from "@shared/schema";
 import { stripeService } from "./stripe-service";
 import Stripe from "stripe";
-
-// Initialize Stripe instance
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || "", {
-  apiVersion: "2025-09-30.clover",
-});
 import { z } from "zod";
 // @ts-ignore - Twilio types have export issues
 import twilio from "twilio";
@@ -66,6 +61,14 @@ function generateTwiMLResponse(config: AgentConfiguration): string {
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  function getStripeInstance(): Stripe | null {
+    const isProduction = process.env.REPLIT_DEPLOYMENT === '1';
+    const key = isProduction
+      ? process.env.STRIPE_SECRET_KEY
+      : (process.env.TESTING_STRIPE_SECRET_KEY || process.env.STRIPE_SECRET_KEY);
+    if (!key) return null;
+    return new Stripe(key, { apiVersion: "2025-09-30.clover" });
+  }
   // ========== MCP Server Routes (MUST come before Firebase auth middleware) ==========
   // MCP JSON-RPC 2.0 endpoint for ChatGPT Agent Builder
   app.post("/api/mcp", async (req, res) => {
@@ -3724,42 +3727,52 @@ Venue Data: ${JSON.stringify(serpData)}`;
       };
 
       // Try to list meters
-      try {
-        const meters = await stripe.billing.meters.list({ limit: 100 });
-        diagnostics.meters = {
-          count: meters.data.length,
-          names: meters.data.map((m: any) => m.event_name),
-          details: meters.data.map((m: any) => ({
-            event_name: m.event_name,
-            display_name: m.display_name,
-            status: m.status,
-            created: new Date(m.created * 1000).toISOString()
-          }))
-        };
-      } catch (error: any) {
-        diagnostics.errors.push({
-          operation: 'list_meters',
-          error: error.message,
-          code: error.code
-        });
+      const stripeForDiagnostics = getStripeInstance();
+      if (!stripeForDiagnostics) {
+        diagnostics.errors.push({ operation: 'list_meters', error: 'Stripe not configured' });
+      } else {
+        try {
+          const meters = await stripeForDiagnostics.billing.meters.list({ limit: 100 });
+          diagnostics.meters = {
+            count: meters.data.length,
+            names: meters.data.map((m: any) => m.event_name),
+            details: meters.data.map((m: any) => ({
+              event_name: m.event_name,
+              display_name: m.display_name,
+              status: m.status,
+              created: new Date(m.created * 1000).toISOString()
+            }))
+          };
+        } catch (error: any) {
+          diagnostics.errors.push({
+            operation: 'list_meters',
+            error: error.message,
+            code: error.code
+          });
+        }
       }
 
       // Check if we can retrieve a customer (using the current user's customer ID if they have one)
       if (user.stripeCustomerId) {
-        try {
-          const customer = await stripe.customers.retrieve(user.stripeCustomerId);
-          diagnostics.testCustomer = {
-            id: customer.id,
-            livemode: (customer as any).livemode,
-            created: new Date((customer as any).created * 1000).toISOString()
-          };
-        } catch (error: any) {
-          diagnostics.errors.push({
-            operation: 'retrieve_customer',
-            customerId: user.stripeCustomerId,
-            error: error.message,
-            code: error.code
-          });
+        const stripeForCustomer = getStripeInstance();
+        if (!stripeForCustomer) {
+          diagnostics.errors.push({ operation: 'retrieve_customer', error: 'Stripe not configured' });
+        } else {
+          try {
+            const customer = await stripeForCustomer.customers.retrieve(user.stripeCustomerId);
+            diagnostics.testCustomer = {
+              id: customer.id,
+              livemode: (customer as any).livemode,
+              created: new Date((customer as any).created * 1000).toISOString()
+            };
+          } catch (error: any) {
+            diagnostics.errors.push({
+              operation: 'retrieve_customer',
+              customerId: user.stripeCustomerId,
+              error: error.message,
+              code: error.code
+            });
+          }
         }
       }
 
@@ -3945,6 +3958,112 @@ Venue Data: ${JSON.stringify(serpData)}`;
     } catch (error: any) {
       console.error("Failed to record usage:", error);
       res.status(500).json({ error: error.message || "Failed to record usage" });
+    }
+  });
+
+  // Calculate Total Endpoint
+  app.post('/api/calculate-total', (req, res) => {
+    try {
+      console.log('📥 Received request:', JSON.stringify(req.body, null, 2));
+      
+      const { items } = req.body;
+      
+      // Validation
+      if (!items) {
+        console.error('❌ No items provided');
+        return res.status(400).json({ 
+          success: false,
+          error: 'Invalid request',
+          message: 'items field is required'
+        });
+      }
+      
+      if (!Array.isArray(items)) {
+        console.error('❌ Items is not an array:', typeof items);
+        return res.status(400).json({ 
+          success: false,
+          error: 'Invalid request',
+          message: 'items must be an array'
+        });
+      }
+      
+      if (items.length === 0) {
+        console.error('❌ Items array is empty');
+        return res.status(400).json({ 
+          success: false,
+          error: 'Invalid request',
+          message: 'items array cannot be empty'
+        });
+      }
+      
+      // Calculate total
+      let total = 0;
+      let itemCount = 0;
+      const breakdown: Array<{
+        name: string;
+        price: number;
+        quantity: number;
+        line_total: number;
+      }> = [];
+      
+      items.forEach((item, index) => {
+        console.log(`  Processing item ${index + 1}:`, item);
+        
+        // Validate item structure
+        if (!item.name) {
+          throw new Error(`Item at index ${index} is missing 'name' field`);
+        }
+        
+        if (typeof item.price !== 'number') {
+          throw new Error(`Item at index ${index} (${item.name}) has invalid price: ${item.price} (type: ${typeof item.price})`);
+        }
+        
+        if (typeof item.quantity !== 'number') {
+          throw new Error(`Item at index ${index} (${item.name}) has invalid quantity: ${item.quantity} (type: ${typeof item.quantity})`);
+        }
+        
+        // Calculate line total
+        const lineTotal = item.price * item.quantity;
+        total += lineTotal;
+        itemCount += item.quantity;
+        
+        breakdown.push({
+          name: item.name,
+          price: item.price,
+          quantity: item.quantity,
+          line_total: Math.round(lineTotal * 100) / 100
+        });
+        
+        console.log(`    ✓ ${item.name}: ${item.quantity} x $${item.price} = $${lineTotal}`);
+      });
+      
+      // Round to 2 decimal places
+      total = Math.round(total * 100) / 100;
+      
+      console.log(`✅ TOTAL CALCULATED: $${total} (${itemCount} items)`);
+      
+      // Return response
+      const response = {
+        success: true,
+        total: total,
+        item_count: itemCount,
+        formatted_total: `$${total.toFixed(2)}`,
+        breakdown: breakdown
+      };
+      
+      console.log('📤 Sending response:', JSON.stringify(response, null, 2));
+      
+      res.json(response);
+      
+    } catch (error: any) {
+      console.error('❌ Calculate Total Error:', error.message);
+      console.error('Stack:', error.stack);
+      
+      res.status(400).json({ 
+        success: false,
+        error: 'Calculation failed',
+        message: error.message
+      });
     }
   });
 
