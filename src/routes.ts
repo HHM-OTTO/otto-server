@@ -4070,6 +4070,35 @@ Venue Data: ${JSON.stringify(serpData)}`;
   app.post('/api/check-restaurant-open', (req, res) => {
     const { current_time, wait_time_minutes, opening_hours } = req.body;
 
+    const parseOffsetMinutes = (isoString: string) => {
+      const offsetMatch = isoString.match(/([+-])(\d{2}):?(\d{2})$/);
+      if (offsetMatch) {
+        const sign = offsetMatch[1] === '-' ? -1 : 1;
+        return sign * (parseInt(offsetMatch[2], 10) * 60 + parseInt(offsetMatch[3], 10));
+      }
+      if (isoString.endsWith('Z')) {
+        return 0;
+      }
+      const tempDate = new Date(isoString);
+      return -tempDate.getTimezoneOffset();
+    };
+
+    const formatTimeWithOffset = (date: Date, offsetMinutes: number) => {
+      const utcMinutes = Math.floor(date.getTime() / 60000);
+      let localMinutes = utcMinutes + offsetMinutes;
+      const minutesInDay = 24 * 60;
+      localMinutes = ((localMinutes % minutesInDay) + minutesInDay) % minutesInDay;
+
+      let hours = Math.floor(localMinutes / 60);
+      const minutes = localMinutes % 60;
+      const suffix = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12;
+      if (hours === 0) hours = 12;
+
+      const minuteStr = minutes.toString().padStart(2, '0');
+      return `${hours}:${minuteStr} ${suffix}`;
+    };
+
     const parseTwelveHourIntervals = (input: string) => {
       const regex = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/gi;
       const timesInMinutes: number[] = [];
@@ -4105,18 +4134,20 @@ Venue Data: ${JSON.stringify(serpData)}`;
       return intervals.length ? intervals : null;
     };
 
-    const createDateFromMinutes = (base: Date, minutes: number) => {
-      const d = new Date(base);
-      d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
-      return d;
+    const createDateFromMinutes = (base: Date, offsetMinutes: number, minutes: number) => {
+      const utcMidnight =
+        Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate());
+      const localMidnightUtc = utcMidnight - offsetMinutes * 60000;
+      return new Date(localMidnightUtc + minutes * 60000);
     };
-    
+
     try {
       const now = new Date(current_time);
       if (Number.isNaN(now.getTime())) {
         return res.status(400).json({ error: "Invalid current_time format" });
       }
 
+      const inputOffsetMinutes = parseOffsetMinutes(current_time);
       const pickupTime = new Date(now.getTime() + wait_time_minutes * 60000);
 
       const intervals = parseTwelveHourIntervals(opening_hours);
@@ -4129,8 +4160,8 @@ Venue Data: ${JSON.stringify(serpData)}`;
       let matchingClosingTime: Date | null = null;
 
       for (const [startMinutes, endMinutes] of intervals) {
-        const startTime = createDateFromMinutes(now, startMinutes);
-        const endTime = createDateFromMinutes(now, endMinutes);
+        const startTime = createDateFromMinutes(now, inputOffsetMinutes, startMinutes);
+        const endTime = createDateFromMinutes(now, inputOffsetMinutes, endMinutes);
 
         if (pickupTime >= startTime && pickupTime <= endTime) {
           canAcceptOrders = true;
@@ -4139,18 +4170,10 @@ Venue Data: ${JSON.stringify(serpData)}`;
         }
       }
 
-      const pickupTimeStr = pickupTime.toLocaleTimeString('en-US', {
-        hour: 'numeric',
-        minute: '2-digit',
-        hour12: true,
-      });
+      const pickupTimeStr = formatTimeWithOffset(pickupTime, inputOffsetMinutes);
 
       const closingTimeStr = matchingClosingTime
-        ? matchingClosingTime.toLocaleTimeString('en-US', {
-            hour: 'numeric',
-            minute: '2-digit',
-            hour12: true,
-          })
+        ? formatTimeWithOffset(matchingClosingTime, inputOffsetMinutes)
         : null;
 
       res.json({
