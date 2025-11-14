@@ -4067,6 +4067,59 @@ Venue Data: ${JSON.stringify(serpData)}`;
     }
   });
 
+  app.post('/api/check-restaurant-open', (req, res) => {
+    const { current_time, wait_time_minutes, opening_hours, day_of_week } = req.body;
+    
+    try {
+      // Parse current time
+      const now = new Date(current_time);
+      
+      // Calculate pickup time
+      const pickupTime = new Date(now.getTime() + wait_time_minutes * 60000);
+      
+      // Parse opening hours (e.g., "Monday-Sunday: 11:00-20:15")
+      const hoursMatch = opening_hours.match(/(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})/);
+      
+      if (!hoursMatch) {
+        return res.status(400).json({ error: "Invalid opening_hours format" });
+      }
+      
+      const closingHour = parseInt(hoursMatch[3]);
+      const closingMinute = parseInt(hoursMatch[4]);
+      
+      // Create closing time for today
+      const closingTime = new Date(now);
+      closingTime.setHours(closingHour, closingMinute, 0, 0);
+      
+      // Compare
+      const canAcceptOrders = pickupTime <= closingTime;
+      
+      // Format times
+      const pickupTimeStr = pickupTime.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit', 
+        hour12: true 
+      });
+      
+      const closingTimeStr = closingTime.toLocaleTimeString('en-US', { 
+        hour: 'numeric', 
+        minute: '2-digit', 
+        hour12: true 
+      });
+      
+      res.json({
+        can_accept_orders: canAcceptOrders,
+        pickup_time: pickupTimeStr,
+        closing_time: closingTimeStr,
+        message: canAcceptOrders ? "Restaurant is open for orders" : "Restaurant is closed for orders"
+      });
+      
+    } catch (error) {
+      console.error('Error:', error);
+      res.status(500).json({ error: "Failed to check availability" });
+    }
+  });
+
   // Stripe webhook handler
   app.post("/api/billing/webhook", express.raw({ type: "application/json" }), async (req, res) => {
     const sig = req.headers["stripe-signature"] as string;
