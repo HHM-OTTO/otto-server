@@ -4068,50 +4068,98 @@ Venue Data: ${JSON.stringify(serpData)}`;
   });
 
   app.post('/api/check-restaurant-open', (req, res) => {
-    const { current_time, wait_time_minutes, opening_hours, day_of_week } = req.body;
+    const { current_time, wait_time_minutes, opening_hours } = req.body;
+
+    const parseTwelveHourIntervals = (input: string) => {
+      const regex = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/gi;
+      const timesInMinutes: number[] = [];
+
+      let match: RegExpExecArray | null;
+      while ((match = regex.exec(input))) {
+        let hour = parseInt(match[1], 10);
+        const minute = match[2] ? parseInt(match[2], 10) : 0;
+        const meridian = match[3].toLowerCase();
+
+        if (hour === 12) {
+          hour = meridian === 'am' ? 0 : 12;
+        } else if (meridian === 'pm') {
+          hour += 12;
+        }
+
+        timesInMinutes.push(hour * 60 + minute);
+      }
+
+      if (timesInMinutes.length < 2) {
+        return null;
+      }
+
+      const intervals: Array<[number, number]> = [];
+      for (let i = 0; i + 1 < timesInMinutes.length; i += 2) {
+        const start = timesInMinutes[i];
+        const end = timesInMinutes[i + 1];
+        if (end > start) {
+          intervals.push([start, end]);
+        }
+      }
+
+      return intervals.length ? intervals : null;
+    };
+
+    const createDateFromMinutes = (base: Date, minutes: number) => {
+      const d = new Date(base);
+      d.setHours(Math.floor(minutes / 60), minutes % 60, 0, 0);
+      return d;
+    };
     
     try {
-      // Parse current time
       const now = new Date(current_time);
-      
-      // Calculate pickup time
-      const pickupTime = new Date(now.getTime() + wait_time_minutes * 60000);
-      
-      // Parse opening hours (e.g., "Monday-Sunday: 11:00-20:15")
-      const hoursMatch = opening_hours.match(/(\d{1,2}):(\d{2})-(\d{1,2}):(\d{2})/);
-      
-      if (!hoursMatch) {
-        return res.status(400).json({ error: "Invalid opening_hours format" });
+      if (Number.isNaN(now.getTime())) {
+        return res.status(400).json({ error: "Invalid current_time format" });
       }
-      
-      const closingHour = parseInt(hoursMatch[3]);
-      const closingMinute = parseInt(hoursMatch[4]);
-      
-      // Create closing time for today
-      const closingTime = new Date(now);
-      closingTime.setHours(closingHour, closingMinute, 0, 0);
-      
-      // Compare
-      const canAcceptOrders = pickupTime <= closingTime;
-      
-      // Format times
-      const pickupTimeStr = pickupTime.toLocaleTimeString('en-US', { 
-        hour: 'numeric', 
-        minute: '2-digit', 
-        hour12: true 
+
+      const pickupTime = new Date(now.getTime() + wait_time_minutes * 60000);
+
+      const intervals = parseTwelveHourIntervals(opening_hours);
+
+      if (!intervals) {
+        return res.status(400).json({ error: "Invalid opening_hours format. Example: '12pm till 3pm and 5pm till 8:15pm'." });
+      }
+
+      let canAcceptOrders = false;
+      let matchingClosingTime: Date | null = null;
+
+      for (const [startMinutes, endMinutes] of intervals) {
+        const startTime = createDateFromMinutes(now, startMinutes);
+        const endTime = createDateFromMinutes(now, endMinutes);
+
+        if (pickupTime >= startTime && pickupTime <= endTime) {
+          canAcceptOrders = true;
+          matchingClosingTime = endTime;
+          break;
+        }
+      }
+
+      const pickupTimeStr = pickupTime.toLocaleTimeString('en-US', {
+        hour: 'numeric',
+        minute: '2-digit',
+        hour12: true,
       });
-      
-      const closingTimeStr = closingTime.toLocaleTimeString('en-US', { 
-        hour: 'numeric', 
-        minute: '2-digit', 
-        hour12: true 
-      });
-      
+
+      const closingTimeStr = matchingClosingTime
+        ? matchingClosingTime.toLocaleTimeString('en-US', {
+            hour: 'numeric',
+            minute: '2-digit',
+            hour12: true,
+          })
+        : null;
+
       res.json({
         can_accept_orders: canAcceptOrders,
         pickup_time: pickupTimeStr,
         closing_time: closingTimeStr,
-        message: canAcceptOrders ? "Restaurant is open for orders" : "Restaurant is closed for orders"
+        message: canAcceptOrders
+          ? `Order ready by ${pickupTimeStr}, before closing at ${closingTimeStr}.`
+          : `Kitchen closed for the requested pickup time.`,
       });
       
     } catch (error) {
