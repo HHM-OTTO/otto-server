@@ -33,7 +33,7 @@ async function sendSlackErrorNotification(
   const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
   
   if (!slackWebhookUrl) {
-    // Silently fail if Slack webhook is not configured
+    console.log('⚠️ Slack webhook URL not configured - skipping notification');
     return;
   }
 
@@ -41,61 +41,44 @@ async function sendSlackErrorNotification(
     const timestamp = new Date().toISOString();
     const errorDetails = details ? `\n\`\`\`${JSON.stringify(details, null, 2)}\`\`\`` : '';
     
+    // Simplified payload format for better compatibility
     const payload = {
-      text: `🚨 API Error Alert`,
+      text: `🚨 API Error Alert - ${endpoint}`,
       blocks: [
         {
-          type: "header",
-          text: {
-            type: "plain_text",
-            text: "🚨 API Error Alert"
-          }
-        },
-        {
           type: "section",
-          fields: [
-            {
-              type: "mrkdwn",
-              text: `*Endpoint:*\n\`${endpoint}\``
-            },
-            {
-              type: "mrkdwn",
-              text: `*Status Code:*\n\`${statusCode}\``
-            },
-            {
-              type: "mrkdwn",
-              text: `*Error:*\n${error}`
-            },
-            {
-              type: "mrkdwn",
-              text: `*Timestamp:*\n${timestamp}`
-            }
-          ]
+          text: {
+            type: "mrkdwn",
+            text: `*🚨 API Error Alert*\n\n*Endpoint:* \`${endpoint}\`\n*Status Code:* \`${statusCode}\`\n*Error:* ${error}\n*Timestamp:* ${timestamp}${errorDetails}`
+          }
         }
       ]
     };
 
-    // Add error details if provided
-    if (errorDetails) {
-      payload.blocks.push({
-        type: "section",
-        text: {
-          type: "mrkdwn",
-          text: `*Details:*${errorDetails}`
-        }
-      });
-    }
-
+    console.log('📤 Sending Slack notification:', { endpoint, statusCode, error });
+    
     // Send to Slack asynchronously (don't block)
-    fetch(slackWebhookUrl, {
+    const response = await fetch(slackWebhookUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(payload)
-    }).catch(err => {
-      console.error('Failed to send Slack notification:', err);
     });
-  } catch (err) {
-    console.error('Error preparing Slack notification:', err);
+
+    if (!response.ok) {
+      const responseText = await response.text();
+      console.error('❌ Slack notification failed:', {
+        status: response.status,
+        statusText: response.statusText,
+        body: responseText
+      });
+    } else {
+      console.log('✅ Slack notification sent successfully');
+    }
+  } catch (err: any) {
+    console.error('❌ Error sending Slack notification:', {
+      message: err?.message,
+      stack: err?.stack
+    });
   }
 }
 
