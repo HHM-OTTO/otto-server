@@ -23,6 +23,82 @@ import { handleMCPConnection } from "./mcp-server";
 // Constants for Twilio webhook
 const DEFAULT_TIMEOUT_SECONDS = 20;
 
+// Helper function to send Slack notifications for errors
+async function sendSlackErrorNotification(
+  endpoint: string,
+  statusCode: number,
+  error: string,
+  details?: any
+): Promise<void> {
+  const slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
+  
+  if (!slackWebhookUrl) {
+    // Silently fail if Slack webhook is not configured
+    return;
+  }
+
+  try {
+    const timestamp = new Date().toISOString();
+    const errorDetails = details ? `\n\`\`\`${JSON.stringify(details, null, 2)}\`\`\`` : '';
+    
+    const payload = {
+      text: `🚨 API Error Alert`,
+      blocks: [
+        {
+          type: "header",
+          text: {
+            type: "plain_text",
+            text: "🚨 API Error Alert"
+          }
+        },
+        {
+          type: "section",
+          fields: [
+            {
+              type: "mrkdwn",
+              text: `*Endpoint:*\n\`${endpoint}\``
+            },
+            {
+              type: "mrkdwn",
+              text: `*Status Code:*\n\`${statusCode}\``
+            },
+            {
+              type: "mrkdwn",
+              text: `*Error:*\n${error}`
+            },
+            {
+              type: "mrkdwn",
+              text: `*Timestamp:*\n${timestamp}`
+            }
+          ]
+        }
+      ]
+    };
+
+    // Add error details if provided
+    if (errorDetails) {
+      payload.blocks.push({
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Details:*${errorDetails}`
+        }
+      });
+    }
+
+    // Send to Slack asynchronously (don't block)
+    fetch(slackWebhookUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload)
+    }).catch(err => {
+      console.error('Failed to send Slack notification:', err);
+    });
+  } catch (err) {
+    console.error('Error preparing Slack notification:', err);
+  }
+}
+
 // Helper function to generate safe default TwiML
 function getSafeDefaultTwiML(): string {
   return `<Response>
@@ -3962,7 +4038,7 @@ Venue Data: ${JSON.stringify(serpData)}`;
   });
 
   // Calculate Total Endpoint
-  app.post('/api/calculate-total', (req, res) => {
+  app.post('/api/calculate-total', async (req, res) => {
     try {
       console.log('📥 Received request:', JSON.stringify(req.body, null, 2));
       
@@ -3971,6 +4047,12 @@ Venue Data: ${JSON.stringify(serpData)}`;
       // Validation
       if (!items) {
         console.error('❌ No items provided');
+        await sendSlackErrorNotification(
+          '/api/calculate-total',
+          400,
+          'items field is required',
+          { requestBody: req.body }
+        );
         return res.status(400).json({ 
           success: false,
           error: 'Invalid request',
@@ -3980,6 +4062,12 @@ Venue Data: ${JSON.stringify(serpData)}`;
       
       if (!Array.isArray(items)) {
         console.error('❌ Items is not an array:', typeof items);
+        await sendSlackErrorNotification(
+          '/api/calculate-total',
+          400,
+          'items must be an array',
+          { requestBody: req.body, itemsType: typeof items }
+        );
         return res.status(400).json({ 
           success: false,
           error: 'Invalid request',
@@ -3989,6 +4077,12 @@ Venue Data: ${JSON.stringify(serpData)}`;
       
       if (items.length === 0) {
         console.error('❌ Items array is empty');
+        await sendSlackErrorNotification(
+          '/api/calculate-total',
+          400,
+          'items array cannot be empty',
+          { requestBody: req.body }
+        );
         return res.status(400).json({ 
           success: false,
           error: 'Invalid request',
@@ -4059,6 +4153,16 @@ Venue Data: ${JSON.stringify(serpData)}`;
       console.error('❌ Calculate Total Error:', error.message);
       console.error('Stack:', error.stack);
       
+      await sendSlackErrorNotification(
+        '/api/calculate-total',
+        400,
+        error.message || 'Calculation failed',
+        { 
+          requestBody: req.body,
+          stack: error.stack 
+        }
+      );
+      
       res.status(400).json({ 
         success: false,
         error: 'Calculation failed',
@@ -4067,7 +4171,7 @@ Venue Data: ${JSON.stringify(serpData)}`;
     }
   });
 
-  app.post('/api/check-restaurant-open', (req, res) => {
+  app.post('/api/check-restaurant-open', async (req, res) => {
     const { current_time, wait_time_minutes, opening_hours } = req.body;
 
     const parseOffsetMinutes = (isoString: string) => {
@@ -4144,6 +4248,12 @@ Venue Data: ${JSON.stringify(serpData)}`;
     try {
       const now = new Date(current_time);
       if (Number.isNaN(now.getTime())) {
+        await sendSlackErrorNotification(
+          '/api/check-restaurant-open',
+          400,
+          'Invalid current_time format',
+          { requestBody: req.body, current_time }
+        );
         return res.status(400).json({ error: "Invalid current_time format" });
       }
 
@@ -4153,6 +4263,12 @@ Venue Data: ${JSON.stringify(serpData)}`;
       const intervals = parseTwelveHourIntervals(opening_hours);
 
       if (!intervals) {
+        await sendSlackErrorNotification(
+          '/api/check-restaurant-open',
+          400,
+          "Invalid opening_hours format. Example: '12pm till 3pm and 5pm till 8:15pm'.",
+          { requestBody: req.body, opening_hours }
+        );
         return res.status(400).json({ error: "Invalid opening_hours format. Example: '12pm till 3pm and 5pm till 8:15pm'." });
       }
 
@@ -4185,8 +4301,19 @@ Venue Data: ${JSON.stringify(serpData)}`;
           : `Kitchen closed for the requested pickup time.`,
       });
       
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error:', error);
+      
+      await sendSlackErrorNotification(
+        '/api/check-restaurant-open',
+        500,
+        error?.message || 'Failed to check availability',
+        { 
+          requestBody: req.body,
+          stack: error?.stack 
+        }
+      );
+      
       res.status(500).json({ error: "Failed to check availability" });
     }
   });
