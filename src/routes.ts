@@ -4155,7 +4155,7 @@ Venue Data: ${JSON.stringify(serpData)}`;
   });
 
   app.post('/api/check-restaurant-open', async (req, res) => {
-    const { current_time, wait_time_minutes, opening_hours } = req.body;
+    const { current_time, wait_time_minutes, opening_hours, day_of_week } = req.body;
 
     const parseOffsetMinutes = (isoString: string) => {
       const offsetMatch = isoString.match(/([+-])(\d{2}):?(\d{2})$/);
@@ -4186,12 +4186,220 @@ Venue Data: ${JSON.stringify(serpData)}`;
       return `${hours}:${minuteStr} ${suffix}`;
     };
 
-    const parseTwelveHourIntervals = (input: string) => {
-      const regex = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/gi;
-      const timesInMinutes: number[] = [];
+    const normalizeDayName = (day: string): string | null => {
+      const dayLower = day.toLowerCase().trim();
+      const dayMap: Record<string, string> = {
+        'monday': 'Monday',
+        'mon': 'Monday',
+        'tuesday': 'Tuesday',
+        'tue': 'Tuesday',
+        'tues': 'Tuesday',
+        'wednesday': 'Wednesday',
+        'wed': 'Wednesday',
+        'thursday': 'Thursday',
+        'thu': 'Thursday',
+        'thur': 'Thursday',
+        'thurs': 'Thursday',
+        'friday': 'Friday',
+        'fri': 'Friday',
+        'saturday': 'Saturday',
+        'sat': 'Saturday',
+        'sunday': 'Sunday',
+        'sun': 'Sunday'
+      };
+      return dayMap[dayLower] || null;
+    };
 
-      let match: RegExpExecArray | null;
-      while ((match = regex.exec(input))) {
+    const parseOpeningHours = (input: string, targetDay: string | undefined) => {
+      const allIntervals: Array<{ days: string[], intervals: Array<[number, number]> }> = [];
+      
+      // Split by newlines to handle day-specific entries
+      const lines = input.split(/\n/).filter(line => line.trim());
+      
+      // Try 24-hour format first (e.g., "Monday-Sunday: 12:00-15:00, 17:00-20:15")
+      const twentyFourHourRegex = /(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})/g;
+      
+      const extractDayNames = (line: string): string[] => {
+        // Try pattern with colon first: "Mon, Tue: 5-8:30pm" or "Monday-Sunday: 12:00-15:00"
+        let dayMatch = line.match(/^([^:]+?):/);
+        let dayPart = dayMatch ? dayMatch[1] : null;
+        
+        // If no colon, try pattern without colon: "Mon, Tue 5-8:30pm"
+        if (!dayPart) {
+          // Match day names at the start before a time pattern (digit or time)
+          const dayPatternMatch = line.match(/^((?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday)(?:\s*,\s*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))*(?:\s*-\s*(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun|Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday))?)\s+/i);
+          if (dayPatternMatch) {
+            dayPart = dayPatternMatch[1];
+          }
+        }
+        
+        if (!dayPart) {
+          return ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+        }
+        
+        let dayNames: string[] = [];
+        
+        // Handle ranges like "Monday-Sunday" or "Mon-Sun"
+        if (dayPart.includes('-') && !dayPart.match(/\d/)) {
+          const [startDay, endDay] = dayPart.split('-').map(d => normalizeDayName(d.trim())).filter(Boolean) as string[];
+          if (startDay && endDay) {
+            const dayOrder = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+            const startIdx = dayOrder.indexOf(startDay);
+            const endIdx = dayOrder.indexOf(endDay);
+            if (startIdx !== -1 && endIdx !== -1) {
+              if (startIdx <= endIdx) {
+                dayNames = dayOrder.slice(startIdx, endIdx + 1);
+              } else {
+                // Handle wrap-around (e.g., Sunday-Monday)
+                dayNames = [...dayOrder.slice(startIdx), ...dayOrder.slice(0, endIdx + 1)];
+              }
+            }
+          }
+        } else {
+          // Handle comma-separated days like "Mon, Tue" or "Monday, Tuesday"
+          dayNames = dayPart.split(',').map(d => normalizeDayName(d.trim())).filter(Boolean) as string[];
+        }
+        
+        return dayNames.length > 0 ? dayNames : ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      };
+      
+      for (const line of lines.length > 0 ? lines : [input]) {
+        const dayNames = extractDayNames(line);
+        
+        // Extract time intervals from the line
+        const intervals: Array<[number, number]> = [];
+        let match: RegExpExecArray | null;
+        twentyFourHourRegex.lastIndex = 0; // Reset regex
+        
+        while ((match = twentyFourHourRegex.exec(line))) {
+          const startHour = parseInt(match[1], 10);
+          const startMinute = parseInt(match[2], 10);
+          const endHour = parseInt(match[3], 10);
+          const endMinute = parseInt(match[4], 10);
+
+          if (startHour >= 0 && startHour < 24 && startMinute >= 0 && startMinute < 60 &&
+              endHour >= 0 && endHour < 24 && endMinute >= 0 && endMinute < 60) {
+            const start = startHour * 60 + startMinute;
+            const end = endHour * 60 + endMinute;
+            if (end > start) {
+              intervals.push([start, end]);
+            }
+          }
+        }
+        
+        if (intervals.length > 0) {
+          allIntervals.push({ days: dayNames, intervals });
+        }
+      }
+      
+      // If we found day-specific intervals, filter by target day
+      if (allIntervals.length > 0 && targetDay) {
+        const normalizedTargetDay = normalizeDayName(targetDay);
+        if (normalizedTargetDay) {
+          const matchingIntervals: Array<[number, number]> = [];
+          for (const entry of allIntervals) {
+            if (entry.days.includes(normalizedTargetDay)) {
+              matchingIntervals.push(...entry.intervals);
+            }
+          }
+          return matchingIntervals.length > 0 ? matchingIntervals : null;
+        }
+      }
+      
+      // If no day filtering or no day-specific format found, collect all intervals
+      if (allIntervals.length > 0) {
+        const allTimeIntervals: Array<[number, number]> = [];
+        for (const entry of allIntervals) {
+          allTimeIntervals.push(...entry.intervals);
+        }
+        return allTimeIntervals.length > 0 ? allTimeIntervals : null;
+      }
+
+      // Parse 12-hour format with improved handling for various formats
+      // Handles: "5-8:30pm", "11:30am - 8:30pm", "12pm till 3pm", etc.
+      // Also handles day-specific: "Mon, Tue 5-8:30pm"
+      const intervals12WithDays: Array<{ days: string[], intervals: Array<[number, number]> }> = [];
+      
+      // Pattern to match time ranges: start_time - end_time (with optional am/pm on both or just end)
+      // Examples: "5-8:30pm", "11:30am - 8:30pm", "12pm-3pm", "12pm till 3pm"
+      const rangePattern = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)?\s*(?:[-–—]|till|to)\s*(\d{1,2})(?::(\d{2}))?\s*(am|pm)/gi;
+      
+      for (const line of lines.length > 0 ? lines : [input]) {
+        const dayNames = extractDayNames(line);
+        const intervals12: Array<[number, number]> = [];
+        let match: RegExpExecArray | null;
+        rangePattern.lastIndex = 0; // Reset regex
+        
+        while ((match = rangePattern.exec(line))) {
+          // Parse start time
+          let startHour = parseInt(match[1], 10);
+          const startMinute = match[2] ? parseInt(match[2], 10) : 0;
+          const startMeridian = match[3] ? match[3].toLowerCase() : null;
+          
+          // Parse end time
+          let endHour = parseInt(match[4], 10);
+          const endMinute = match[5] ? parseInt(match[5], 10) : 0;
+          const endMeridian = match[6].toLowerCase();
+          
+          // If start doesn't have meridian, infer from end (if end is pm and start < 12, assume pm)
+          const inferredStartMeridian = startMeridian || (endMeridian === 'pm' && startHour < 12 ? 'pm' : 'am');
+          
+          // Convert start time
+          if (startHour === 12) {
+            startHour = inferredStartMeridian === 'am' ? 0 : 12;
+          } else if (inferredStartMeridian === 'pm') {
+            startHour += 12;
+          }
+          
+          // Convert end time
+          if (endHour === 12) {
+            endHour = endMeridian === 'am' ? 0 : 12;
+          } else if (endMeridian === 'pm') {
+            endHour += 12;
+          }
+          
+          const start = startHour * 60 + startMinute;
+          const end = endHour * 60 + endMinute;
+          
+          if (end > start && start >= 0 && start < 24 * 60 && end >= 0 && end < 24 * 60) {
+            intervals12.push([start, end]);
+          }
+        }
+        
+        if (intervals12.length > 0) {
+          intervals12WithDays.push({ days: dayNames, intervals: intervals12 });
+        }
+      }
+      
+      // If we found day-specific 12-hour intervals, filter by target day
+      if (intervals12WithDays.length > 0 && targetDay) {
+        const normalizedTargetDay = normalizeDayName(targetDay);
+        if (normalizedTargetDay) {
+          const matchingIntervals: Array<[number, number]> = [];
+          for (const entry of intervals12WithDays) {
+            if (entry.days.includes(normalizedTargetDay)) {
+              matchingIntervals.push(...entry.intervals);
+            }
+          }
+          return matchingIntervals.length > 0 ? matchingIntervals : null;
+        }
+      }
+      
+      // If we found 12-hour intervals but no day filtering, collect all intervals
+      if (intervals12WithDays.length > 0) {
+        const allTimeIntervals: Array<[number, number]> = [];
+        for (const entry of intervals12WithDays) {
+          allTimeIntervals.push(...entry.intervals);
+        }
+        return allTimeIntervals.length > 0 ? allTimeIntervals : null;
+      }
+      
+      // Fall back to extracting all times and pairing them (original behavior)
+      const twelveHourRegex = /(\d{1,2})(?::(\d{2}))?\s*(am|pm)/gi;
+      const timesInMinutes: number[] = [];
+      let match: RegExpExecArray | null = null;
+
+      while ((match = twelveHourRegex.exec(input))) {
         let hour = parseInt(match[1], 10);
         const minute = match[2] ? parseInt(match[2], 10) : 0;
         const meridian = match[3].toLowerCase();
@@ -4209,16 +4417,16 @@ Venue Data: ${JSON.stringify(serpData)}`;
         return null;
       }
 
-      const intervals: Array<[number, number]> = [];
+      const pairedIntervals: Array<[number, number]> = [];
       for (let i = 0; i + 1 < timesInMinutes.length; i += 2) {
         const start = timesInMinutes[i];
         const end = timesInMinutes[i + 1];
         if (end > start) {
-          intervals.push([start, end]);
+          pairedIntervals.push([start, end]);
         }
       }
 
-      return intervals.length ? intervals : null;
+      return pairedIntervals.length ? pairedIntervals : null;
     };
 
     const createDateFromMinutes = (base: Date, offsetMinutes: number, minutes: number) => {
@@ -4243,16 +4451,18 @@ Venue Data: ${JSON.stringify(serpData)}`;
       const inputOffsetMinutes = parseOffsetMinutes(current_time);
       const pickupTime = new Date(now.getTime() + wait_time_minutes * 60000);
 
-      const intervals = parseTwelveHourIntervals(opening_hours);
+      const intervals = parseOpeningHours(opening_hours, day_of_week);
 
       if (!intervals) {
         await sendSlackErrorNotification(
           '/api/check-restaurant-open',
           400,
-          "Invalid opening_hours format. Example: '12pm till 3pm and 5pm till 8:15pm'.",
+          "Invalid opening_hours format. Supported formats: '12:00-15:00, 17:00-20:15' (24-hour) or '5-8:30pm' or '11:30am - 8:30pm' (12-hour).",
           { requestBody: req.body, opening_hours }
         );
-        return res.status(400).json({ error: "Invalid opening_hours format. Example: '12pm till 3pm and 5pm till 8:15pm'." });
+        return res.status(400).json({ 
+          error: "Invalid opening_hours format. Supported formats: '12:00-15:00, 17:00-20:15' (24-hour) or '5-8:30pm' or '11:30am - 8:30pm' (12-hour)." 
+        });
       }
 
       let canAcceptOrders = false;
