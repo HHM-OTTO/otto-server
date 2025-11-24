@@ -4429,10 +4429,21 @@ Venue Data: ${JSON.stringify(serpData)}`;
       return pairedIntervals.length ? pairedIntervals : null;
     };
 
-    const createDateFromMinutes = (base: Date, offsetMinutes: number, minutes: number) => {
-      const utcMidnight =
-        Date.UTC(base.getUTCFullYear(), base.getUTCMonth(), base.getUTCDate());
-      const localMidnightUtc = utcMidnight - offsetMinutes * 60000;
+    const createDateFromMinutes = (baseDate: Date, offsetMinutes: number, minutes: number, isoString: string) => {
+      // Parse the ISO string to get the local date components directly
+      // Format: "2025-11-25T09:09:00+11:00"
+      const dateMatch = isoString.match(/^(\d{4})-(\d{2})-(\d{2})/);
+      if (!dateMatch) {
+        throw new Error('Invalid date format in ISO string');
+      }
+      
+      const localYear = parseInt(dateMatch[1], 10);
+      const localMonth = parseInt(dateMatch[2], 10) - 1; // Month is 0-indexed
+      const localDay = parseInt(dateMatch[3], 10);
+      
+      // Create UTC timestamp for local midnight, then add the minutes
+      // Local midnight in UTC = UTC midnight of that date - offset
+      const localMidnightUtc = Date.UTC(localYear, localMonth, localDay) - offsetMinutes * 60000;
       return new Date(localMidnightUtc + minutes * 60000);
     };
 
@@ -4469,8 +4480,12 @@ Venue Data: ${JSON.stringify(serpData)}`;
       let matchingClosingTime: Date | null = null;
 
       for (const [startMinutes, endMinutes] of intervals) {
-        const startTime = createDateFromMinutes(now, inputOffsetMinutes, startMinutes);
-        const endTime = createDateFromMinutes(now, inputOffsetMinutes, endMinutes);
+        const startTime = createDateFromMinutes(now, inputOffsetMinutes, startMinutes, current_time);
+        const endTime = createDateFromMinutes(now, inputOffsetMinutes, endMinutes, current_time);
+
+        console.log(`Checking interval: ${startMinutes}min (${formatTimeWithOffset(startTime, inputOffsetMinutes)}) to ${endMinutes}min (${formatTimeWithOffset(endTime, inputOffsetMinutes)})`);
+        console.log(`Pickup: ${pickupTime.toISOString()}, Start: ${startTime.toISOString()}, End: ${endTime.toISOString()}`);
+        console.log(`Comparison: ${pickupTime >= startTime} && ${pickupTime <= endTime} = ${pickupTime >= startTime && pickupTime <= endTime}`);
 
         if (pickupTime >= startTime && pickupTime <= endTime) {
           canAcceptOrders = true;
