@@ -4526,6 +4526,85 @@ Venue Data: ${JSON.stringify(serpData)}`;
     }
   });
 
+  
+
+  app.post("/api/elevenlabs/outbound-call", async (req, res) => {
+    try {
+      const { phoneNumber, agentId, dynamicVariables, metadata } = req.body;
+
+      if (!phoneNumber) {
+        return res.status(400).json({ success: false, error: "phoneNumber is required" });
+      }
+
+      const apiKey =
+        "sk_5bcb8b4e9d71382dcada2edfba710c734dd1c8bd51148938";
+
+      if (!apiKey) {
+        return res.status(500).json({
+          success: false,
+          error: "ELEVENLABS_API_KEY not configured",
+        });
+      }
+
+      const resolvedAgentId = agentId || "agent_2801kaz38aq4ex8r4ked57vqzsjs";
+
+      const agentPhoneNumberId =
+        process.env.ELEVENLABS_AGENT_PHONE_NUMBER_ID || "phnum_5701kaz3vkbzfd081eb7zb58fb22";
+
+      const payload: Record<string, any> = {
+        agent_id: resolvedAgentId,
+        agent_phone_number_id: agentPhoneNumberId,
+        to_number: phoneNumber,
+      };
+
+      if (dynamicVariables && typeof dynamicVariables === "object") {
+        payload.dynamic_variables = dynamicVariables;
+        payload.client_data = dynamicVariables;
+        payload.conversation_initiation_client_data = {
+          dynamic_variables: dynamicVariables,
+        };
+      }
+
+      if (metadata && typeof metadata === "object") {
+        payload.metadata = metadata;
+      }
+
+      const response = await fetch(
+        "https://api.elevenlabs.io/v1/convai/twilio/outbound-call",
+        {
+          method: "POST",
+          headers: {
+            "xi-api-key": apiKey,
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(payload),
+        }
+      );
+
+      const data = await response.json().catch(() => ({}));
+
+      if (response.ok && data?.success) {
+        return res.status(200).json({
+          success: true,
+          message: "Call initiated!",
+          details: data,
+        });
+      }
+
+      return res.status(response.status || 400).json({
+        success: false,
+        error: data?.message || "Failed to initiate call",
+        details: data,
+      });
+    } catch (error: any) {
+      console.error("ElevenLabs outbound call error:", error);
+      res.status(500).json({
+        success: false,
+        error: error?.message || "Failed to initiate outbound call",
+      });
+    }
+  });
+
   // Stripe webhook handler
   app.post("/api/billing/webhook", express.raw({ type: "application/json" }), async (req, res) => {
     const sig = req.headers["stripe-signature"] as string;
